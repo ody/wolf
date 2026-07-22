@@ -334,37 +334,37 @@ video_params = """
 cudaupload !
 cudaconvertscale add-borders=true !
 video/x-raw(memory:CUDAMemory), width={width}, height={height}, \
-chroma-site={color_range}, format=NV12, colorimetry={color_space}, pixel-aspect-ratio=1/1\
+format=NV12, colorimetry={color_space}, pixel-aspect-ratio=1/1\
 """
 
 video_params_zero_copy = """
 cudaupload !
 cudaconvertscale add-borders=true !
-video/x-raw(memory:CUDAMemory),format=NV12, width={width}, height={height}, pixel-aspect-ratio=1/1
+video/x-raw(memory:CUDAMemory), format=NV12, width={width}, height={height}, colorimetry={color_space}, pixel-aspect-ratio=1/1
 """
 
 [gstreamer.video.defaults.qsv]
 video_params = """
 videoconvertscale !
-video/x-raw, chroma-site={color_range}, width={width}, height={height}, format=NV12,
+video/x-raw, width={width}, height={height}, format=NV12,
 colorimetry={color_space}, pixel-aspect-ratio=1/1\
 """
 
 video_params_zero_copy = """
 vapostproc add-borders=true !
-video/x-raw(memory:VAMemory), format=NV12, width={width}, height={height}, pixel-aspect-ratio=1/1\
+video/x-raw(memory:VAMemory), format=NV12, width={width}, height={height}, colorimetry={color_space}, pixel-aspect-ratio=1/1\
 """
 
 [gstreamer.video.defaults.va]
 video_params = """
 vapostproc add-borders=true !
-video/x-raw, chroma-site={color_range}, width={width}, height={height}, format=NV12,
+video/x-raw, width={width}, height={height}, format=NV12,
 colorimetry={color_space}, pixel-aspect-ratio=1/1\
 """
 
 video_params_zero_copy = """
 vapostproc add-borders=true !
-video/x-raw(memory:VAMemory), format=NV12, width={width}, height={height}, pixel-aspect-ratio=1/1\
+video/x-raw(memory:VAMemory), format=NV12, width={width}, height={height}, colorimetry={color_space}, pixel-aspect-ratio=1/1\
 """
 
 ######################
@@ -414,13 +414,13 @@ video_params = """
 videoconvertscale !
 videorate !
 video/x-raw, width={width}, height={height}, framerate={fps}/1, format=I420,
-chroma-site={color_range}, colorimetry={color_space}\
+colorimetry={color_space}\
 """
 video_params_zero_copy = """
 videoconvertscale !
 videorate !
 video/x-raw, width={width}, height={height}, framerate={fps}/1, format=I420,
-chroma-site={color_range}, colorimetry={color_space}\
+colorimetry={color_space}\
 """
 encoder_pipeline = """
 x265enc tune=zerolatency speed-preset=superfast bitrate={bitrate}
@@ -525,13 +525,13 @@ video_params = """
 videoconvertscale !
 videorate !
 video/x-raw, width={width}, height={height}, framerate={fps}/1, format=I420,
-chroma-site={color_range}, colorimetry={color_space}\
+colorimetry={color_space}\
 """
 video_params_zero_copy = """
 videoconvertscale !
 videorate !
 video/x-raw, width={width}, height={height}, framerate={fps}/1, format=I420,
-chroma-site={color_range}, colorimetry={color_space}\
+colorimetry={color_space}\
 """
 encoder_pipeline = """
 av1enc usage-profile=realtime end-usage=vbr target-bitrate={bitrate} !
