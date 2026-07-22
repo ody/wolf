@@ -488,4 +488,24 @@ std::string DockerAPI::get_api_version() {
   return "v1.40";
 }
 
+bool DockerAPI::detect_rootless() {
+  if (auto conn = docker_connect(socket_path)) {
+    auto raw_msg = req(conn.value().get(), GET, "http://localhost/info");
+    if (raw_msg && raw_msg->first == 200) {
+      try {
+        auto json = parse_json(raw_msg->second);
+        for (const auto &opt : json.at("SecurityOptions").as_array()) {
+          if (std::string_view{opt.as_string().c_str()}.find("name=rootless") != std::string_view::npos) {
+            logs::log(logs::info, "[DOCKER] Rootless mode detected via /info SecurityOptions");
+            return true;
+          }
+        }
+      } catch (...) {
+        logs::log(logs::warning, "[DOCKER] Unable to parse /info SecurityOptions, assuming non-rootless");
+      }
+    }
+  }
+  return false;
+}
+
 } // namespace wolf::core::docker

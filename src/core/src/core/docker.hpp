@@ -65,11 +65,21 @@ class DockerAPI {
 private:
   std::string socket_path; // TODO: add B64 registry_auth
   std::string docker_api_version;
+  bool rootless;
+
+  bool detect_rootless();
 
 public:
   explicit DockerAPI(std::string socket_path = "/var/run/docker.sock") : socket_path(std::move(socket_path)) {
     docker_api_version = get_api_version();
+    rootless = detect_rootless();
   }
+
+  /**
+   * True when the daemon reported rootless mode in /info SecurityOptions at startup.
+   * Cached for the lifetime of the object --- rootless status is static.
+   */
+  [[nodiscard]] bool is_rootless() const { return rootless; }
 
   /**
    * Get a list of all containers
