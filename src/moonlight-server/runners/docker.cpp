@@ -147,7 +147,7 @@ void RunDocker::run(std::string_view session_id,
   // unfortunately hidraw devices use dynamically assigned major numbers rather than static ones
   // so we'll get the major number from reading `/proc/devices` for `hidraw` and `input`
   // and set the right entries in `DeviceCgroupRules`
-  {
+  if (!docker_api.is_rootless()) {
     auto hidraw_major = get_device_major("hidraw");
     auto input_major = get_device_major("input");
     if (hidraw_major && input_major) {
