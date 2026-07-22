@@ -74,6 +74,9 @@ std::shared_ptr<events::JoypadTypes> create_new_joypad(const events::StreamSessi
       break;
     }
   }
+  const std::string wolfsess_suffix = utils::get_env("WOLF_PER_SESSION_INPUTS")
+      ? fmt::format(" wolfsess={}", session.session_id)
+      : "";
   switch (final_type) {
   case wolf::config::ControllerType::AUTO:
   case wolf::config::ControllerType::XBOX: {
@@ -82,7 +85,7 @@ std::shared_ptr<events::JoypadTypes> create_new_joypad(const events::StreamSessi
               controller_number,
               session.session_id);
     auto result =
-        XboxOneJoypad::create({.name = "Wolf X-Box One (virtual) pad",
+        XboxOneJoypad::create({.name = fmt::format("Wolf X-Box One (virtual) pad{}", wolfsess_suffix),
                                // https://github.com/torvalds/linux/blob/master/drivers/input/joystick/xpad.c#L147
                                .vendor_id = 0x045E,
                                .product_id = 0x02EA,
@@ -99,7 +102,7 @@ std::shared_ptr<events::JoypadTypes> create_new_joypad(const events::StreamSessi
   case wolf::config::ControllerType::PS: {
     logs::log(logs::info, "Creating PS joypad for controller {}", controller_number);
     auto result = PS5Joypad::create(
-        {.name = "Wolf DualSense (virtual) pad", .vendor_id = 0x054C, .product_id = 0x0CE6, .version = 0x8111});
+        {.name = fmt::format("Wolf DualSense (virtual) pad{}", wolfsess_suffix), .vendor_id = 0x054C, .product_id = 0x0CE6, .version = 0x8111});
     if (!result) {
       logs::log(logs::error, "Failed to create PS5 joypad: {}", result.getErrorMessage());
       return {};
@@ -128,7 +131,7 @@ std::shared_ptr<events::JoypadTypes> create_new_joypad(const events::StreamSessi
   }
   case wolf::config::ControllerType::NINTENDO:
     logs::log(logs::info, "Creating Nintendo joypad for controller {}", controller_number);
-    auto result = SwitchJoypad::create({.name = "Wolf Nintendo (virtual) pad",
+    auto result = SwitchJoypad::create({.name = fmt::format("Wolf Nintendo (virtual) pad{}", wolfsess_suffix),
                                         // https://github.com/torvalds/linux/blob/master/drivers/hid/hid-ids.h#L981
                                         .vendor_id = 0x057e,
                                         .product_id = 0x2009,

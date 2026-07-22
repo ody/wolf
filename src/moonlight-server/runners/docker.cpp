@@ -1,4 +1,6 @@
 #include <runners/docker.hpp>
+#include <sys/stat.h>
+#include <sys/sysmacros.h>
 
 namespace wolf::core::docker {
 
@@ -58,6 +60,17 @@ void RunDocker::run(std::string_view session_id,
   mounts.insert(mounts.end(), this->container.mounts.begin(), this->container.mounts.end());
   for (const auto &path : paths) {
     mounts.insert(mounts.end(), MountPoint{.source = path.first, .destination = path.second, .mode = "rw"});
+  }
+  const bool rootless = docker_api.is_rootless();
+  const bool per_session_inputs = rootless && utils::get_env("WOLF_PER_SESSION_INPUTS");
+  if (per_session_inputs) {
+    auto session_dev_dir = fmt::format("/run/wolf/dev/{}", session_id);
+    std::filesystem::create_directories(session_dev_dir);
+    mounts.push_back(MountPoint{.source = session_dev_dir, .destination = "/dev/input", .mode = "rw"});
+    logs::log(logs::info, "[DOCKER] Per-session input isolation: bound {} -> /dev/input", session_dev_dir);
+  } else if (rootless) {
+    logs::log(logs::warning,
+              "[DOCKER] Rootless mode without WOLF_PER_SESSION_INPUTS: per-session input isolation disabled");
   }
 
   // Fake udev
@@ -223,7 +236,7 @@ void RunDocker::run(std::string_view session_id,
         });
 
     auto unplug_device_handler = this->ev_bus->register_handler<immer::box<events::UnplugDeviceEvent>>(
-        [session_id, container_id, hw_db_path, this](const immer::box<events::UnplugDeviceEvent> &ev) {
+        [session_id, container_id, hw_db_path, rootless, this](const immer::box<events::UnplugDeviceEvent> &ev) {
           if (ev->session_id == session_id) {
             logs::log(logs::debug, "[DOCKER] Received UnplugDeviceEvent for session: {}", ev->session_id);
             for (const auto &[filename, content] : ev->udev_hw_db_entries) {
@@ -240,8 +253,10 @@ void RunDocker::run(std::string_view session_id,
               std::string cmd;
               if (udev_ev.count("DEVNAME") == 0) {
                 cmd = fmt::format("fake-udev -m {}", udev_msg);
-              } else {
+              } else if (!rootless) {
                 cmd = fmt::format("fake-udev -m {} && rm {}", udev_msg, udev_ev["DEVNAME"]);
+              } else {
+                cmd = fmt::format("fake-udev -m {}", udev_msg);
               }
               logs::log(logs::debug, "[DOCKER] Executing command: {}", cmd);
               docker_api.exec(container_id, {"/bin/bash", "-c", cmd}, "root");
@@ -263,13 +278,53 @@ void RunDocker::run(std::string_view session_id,
             std::string udev_msg = base64_encode(map_to_string(udev_ev));
             if (udev_ev.count("DEVNAME") == 0) {
               cmd = fmt::format("fake-udev -m {}", udev_msg);
-            } else {
-              cmd = fmt::format("mkdir -p /dev/input && mknod {} c {} {} && chmod 777 {} && fake-udev -m {}",
+            } else if (!rootless) {
+              cmd = fmt::format("mkdir -p /dev/input && mknod {0} c {1} {2} && chmod 777 {0} && fake-udev -m {3}",
                                 udev_ev["DEVNAME"],
                                 udev_ev["MAJOR"],
                                 udev_ev["MINOR"],
-                                udev_ev["DEVNAME"],
                                 udev_msg);
+            } else if (per_session_inputs) {
+              auto devname = std::filesystem::path(udev_ev["DEVNAME"]).filename().string();
+              auto host_node = fmt::format("/run/wolf/dev/{}/{}", session_id, devname);
+              for (int i = 0; i < 50; ++i) {
+                if (std::filesystem::exists(host_node)) break;
+                std::this_thread::sleep_for(10ms);
+              }
+              // Wolf's container has no /dev/input mounted (by design), so
+              // gen_udev_base_event()'s stat() failed and udev_ev now carries
+              // MAJOR=0/MINOR=0; the hw_db entry was likewise written as c0:0.
+              // Stat the host node (visible via the /run/wolf volume) to
+              // recover the real numbers, then rewrite the udev payload and
+              // rename the hw_db file so containers see a coherent device.
+              struct stat st {};
+              if (::stat(host_node.c_str(), &st) == 0 && S_ISCHR(st.st_mode)) {
+                auto real_major = std::to_string(::major(st.st_rdev));
+                auto real_minor = std::to_string(::minor(st.st_rdev));
+                auto old_hw_db_key = fmt::format("c{}:{}", udev_ev["MAJOR"], udev_ev["MINOR"]);
+                auto new_hw_db_key = fmt::format("c{}:{}", real_major, real_minor);
+                if (old_hw_db_key != new_hw_db_key) {
+                  std::error_code ec;
+                  std::filesystem::rename(hw_db_path / old_hw_db_key, hw_db_path / new_hw_db_key, ec);
+                  if (ec) {
+                    logs::log(logs::debug,
+                              "[DOCKER] hw_db rename {} -> {} (non-fatal): {}",
+                              old_hw_db_key, new_hw_db_key, ec.message());
+                  }
+                  udev_ev["MAJOR"] = real_major;
+                  udev_ev["MINOR"] = real_minor;
+                  udev_msg = base64_encode(map_to_string(udev_ev));
+                }
+              } else {
+                logs::log(logs::warning,
+                          "[DOCKER] Per-session input: unable to stat {} after 500ms; "
+                          "fake-udev payload will carry MAJOR=0/MINOR=0",
+                          host_node);
+              }
+              cmd = fmt::format("fake-udev -m {}", udev_msg);
+            } else {
+              logs::log(logs::info, "[DOCKER] Rootless: skipping mknod for {}", udev_ev["DEVNAME"]);
+              cmd = fmt::format("fake-udev -m {}", udev_msg);
             }
             logs::log(logs::debug, "[DOCKER] Executing command: {}", cmd);
             docker_api.exec(container_id, {"/bin/bash", "-c", cmd}, "root");
@@ -302,6 +357,14 @@ void RunDocker::run(std::string_view session_id,
       std::filesystem::remove_all(udev_base_path);
     } catch (const std::filesystem::filesystem_error &e) {
       logs::log(logs::warning, "Failed to remove udev base path: {}", e.what());
+    }
+    if (per_session_inputs) {
+      auto session_dev_dir = fmt::format("/run/wolf/dev/{}", session_id);
+      try {
+        std::filesystem::remove_all(session_dev_dir);
+      } catch (const std::filesystem::filesystem_error &e) {
+        logs::log(logs::warning, "[DOCKER] Failed to remove session dir {}: {}", session_dev_dir, e.what());
+      }
     }
   }
 }

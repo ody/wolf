@@ -1,7 +1,27 @@
 #include "uinput.hpp"
+#include <cstdlib>
 #include <inputtino/protected_types.hpp>
 
 namespace wolf::core::input {
+
+static std::string resolve_session_devnode(const std::string &devnode) {
+  if (!::getenv("WOLF_PER_SESSION_INPUTS"))
+    return {};
+  auto devname = std::filesystem::path(devnode).filename();
+  for (int i = 0; i < 50; ++i) {
+    std::error_code ec;
+    for (const auto &entry : std::filesystem::directory_iterator("/run/wolf/dev", ec)) {
+      if (entry.is_directory()) {
+        auto candidate = entry.path() / devname;
+        struct stat st{};
+        if (::stat(candidate.c_str(), &st) == 0 && S_ISCHR(st.st_mode))
+          return candidate.string();
+      }
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  return {};
+}
 
 std::vector<std::map<std::string, std::string>> XboxOneJoypad::get_udev_events() const {
   std::vector<std::map<std::string, std::string>> events;
@@ -13,7 +33,8 @@ std::vector<std::map<std::string, std::string>> XboxOneJoypad::get_udev_events()
       syspath.erase(0, 4); // Remove leading /sys/ from syspath TODO: what if it's not /sys/?
       syspath.append("/" + std::filesystem::path(devnode).filename().string()); // Adds /jsX
 
-      auto event = gen_udev_base_event(devnode, syspath);
+      auto host_node = resolve_session_devnode(devnode);
+      auto event = gen_udev_base_event(devnode, syspath, "add", host_node);
       event["ID_INPUT_JOYSTICK"] = "1";
       event[".INPUT_CLASS"] = "joystick";
       //      event["UNIQ"] = UNIQ_ID;
@@ -27,7 +48,9 @@ std::vector<std::pair<std::string, std::vector<std::string>>> XboxOneJoypad::get
   std::vector<std::pair<std::string, std::vector<std::string>>> result;
 
   if (_state->joy.get()) {
-    result.push_back({gen_udev_hw_db_filename(_state->joy),
+    auto raw_node = std::string(libevdev_uinput_get_devnode(_state->joy.get()));
+    auto host_node = resolve_session_devnode(raw_node);
+    result.push_back({gen_udev_hw_db_filename(host_node.empty() ? raw_node : host_node),
                       {"E:ID_INPUT=1",
                        "E:ID_INPUT_JOYSTICK=1",
                        "E:ID_BUS=usb",
@@ -50,7 +73,8 @@ std::vector<std::map<std::string, std::string>> SwitchJoypad::get_udev_events() 
       syspath.erase(0, 4); // Remove leading /sys/ from syspath TODO: what if it's not /sys/?
       syspath.append("/" + std::filesystem::path(devnode).filename().string()); // Adds /jsX
 
-      auto event = gen_udev_base_event(devnode, syspath);
+      auto host_node = resolve_session_devnode(devnode);
+      auto event = gen_udev_base_event(devnode, syspath, "add", host_node);
       event["ID_INPUT_JOYSTICK"] = "1";
       event[".INPUT_CLASS"] = "joystick";
       //      event["UNIQ"] = UNIQ_ID;
@@ -64,7 +88,9 @@ std::vector<std::pair<std::string, std::vector<std::string>>> SwitchJoypad::get_
   std::vector<std::pair<std::string, std::vector<std::string>>> result;
 
   if (_state->joy.get()) {
-    result.push_back({gen_udev_hw_db_filename(_state->joy),
+    auto raw_node = std::string(libevdev_uinput_get_devnode(_state->joy.get()));
+    auto host_node = resolve_session_devnode(raw_node);
+    result.push_back({gen_udev_hw_db_filename(host_node.empty() ? raw_node : host_node),
                       {"E:ID_INPUT=1",
                        "E:ID_INPUT_JOYSTICK=1",
                        "E:ID_BUS=usb",
@@ -91,7 +117,8 @@ std::vector<std::map<std::string, std::string>> PS5Joypad::get_udev_events() con
         auto sys_path = sys_node.path().string();
         sys_path.erase(0, 4); // Remove leading /sys/ from syspath TODO: what if it's not /sys/?
         auto dev_path = ("/dev/input/" / sys_node.path().filename()).string();
-        auto event = gen_udev_base_event(dev_path, sys_path);
+        auto host_path = resolve_session_devnode(dev_path);
+        auto event = gen_udev_base_event(dev_path, sys_path, "add", host_path);
 
         // Check the name of the device to determine the type
         std::ifstream name_file(std::filesystem::path(sys_entry) / "name");
@@ -159,9 +186,10 @@ std::vector<std::pair<std::string, std::vector<std::string>>> PS5Joypad::get_ude
         auto sys_path = sys_node.path().string();
         sys_path.erase(0, 4); // Remove leading /sys/ from syspath TODO: what if it's not /sys/?
         auto dev_path = ("/dev/input/" / sys_node.path().filename()).string();
+        auto host_path = resolve_session_devnode(dev_path);
 
         std::pair<std::string, std::vector<std::string>> entry;
-        entry.first = gen_udev_hw_db_filename(dev_path);
+        entry.first = gen_udev_hw_db_filename(host_path.empty() ? dev_path : host_path);
 
         // Check the name of the device to determine the type
         std::ifstream name_file(std::filesystem::path(sys_entry) / "name");
