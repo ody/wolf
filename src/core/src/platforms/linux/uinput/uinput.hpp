@@ -72,9 +72,10 @@ static std::string gen_udev_hw_db_filename(inputtino::libevdev_uinput_ptr node) 
 }
 
 static std::map<std::string, std::string>
-gen_udev_base_event(const std::string &devnode, const std::string &syspath, const std::string &action = "add") {
+gen_udev_base_event(const std::string &devnode, const std::string &syspath,
+                    const std::string &action = "add", const std::string &stat_path = "") {
   // Get major:minor
-  auto [dev_major, dev_minor] = get_major_minor(devnode);
+  auto [dev_major, dev_minor] = get_major_minor(stat_path.empty() ? devnode : stat_path);
 
   // Current timestamp
   auto now = std::chrono::system_clock::now();
