@@ -8,6 +8,8 @@ set(BOOST_COMPONENTS
         # Align needed by boost::json
         align
         system
+        property_tree
+        multi_index
 )
 find_package(Boost ${BOOST_VERSION} EXACT COMPONENTS ${BOOST_COMPONENTS} QUIET)
 if (NOT Boost_FOUND)
