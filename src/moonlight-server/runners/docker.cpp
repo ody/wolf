@@ -1,6 +1,7 @@
 #include <runners/docker.hpp>
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
+#include <array>
 
 namespace wolf::core::docker {
 
@@ -98,6 +99,62 @@ void RunDocker::run(std::string_view session_id,
 
   // Add equivalent of --gpu=all if on NVIDIA without the custom driver volume
   auto final_json_opts = this->base_create_json;
+  {
+    // Stable container identity: pin hostname to wolf-steam and derive a
+    // per-client MAC from the app_state_folder numeric ID so DRM/anti-tamper
+    // systems (e.g. Denuvo) see a consistent machine fingerprint across
+    // session restarts instead of a fresh random identity each time.
+    //
+    // Spike result (2026-06-08): under rootless Podman + pasta/netavark,
+    // top-level MacAddress is ignored (deprecated in API v1.44, not
+    // honoured by pasta user-space NAT).  The working field path is
+    // NetworkingConfig.EndpointsConfig.podman.MacAddress where "podman"
+    // is the default rootless Podman bridge network name.
+    auto parsed_json = utils::parse_json(final_json_opts).as_object();
+    if (parsed_json.if_contains("Hostname")) {
+      logs::log(logs::debug, "[DOCKER] Overriding operator-supplied Hostname with wolf-steam");
+    }
+    if (parsed_json.if_contains("MacAddress")) {
+      logs::log(logs::debug, "[DOCKER] Overriding operator-supplied MacAddress with derived stable MAC");
+    }
+    parsed_json["Hostname"] = "wolf-steam";
+    try {
+      // app_state_folder is "<base>/<client_id>/<app_title>" (e.g.
+      // /etc/wolf/6513738712455127096/Steam), so the numeric client id is the
+      // parent directory -- NOT the trailing app-title component.
+      auto folder_path = std::filesystem::path(app_state_folder).lexically_normal();
+      unsigned long long seed = std::stoull(folder_path.parent_path().filename().string());
+      std::array<unsigned char, 6> mac{};
+      for (int i = 0; i < 6; ++i) {
+        mac[i] = static_cast<unsigned char>((seed >> (i * 8)) & 0xFFu);
+      }
+      mac[0] = (mac[0] | 0x02u) & 0xFEu; // locally-administered, unicast
+      auto mac_str = fmt::format("{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+                                 static_cast<unsigned>(mac[0]),
+                                 static_cast<unsigned>(mac[1]),
+                                 static_cast<unsigned>(mac[2]),
+                                 static_cast<unsigned>(mac[3]),
+                                 static_cast<unsigned>(mac[4]),
+                                 static_cast<unsigned>(mac[5]));
+      // NetworkingConfig.EndpointsConfig.podman.MacAddress is the field path
+      // that stabilises the NIC MAC under rootless Podman (pasta/netavark).
+      // "podman" is the default rootless bridge network name.
+      parsed_json["NetworkingConfig"] = boost::json::object{
+          {"EndpointsConfig", boost::json::object{
+              {"podman", boost::json::object{
+                  {"MacAddress", mac_str}
+              }}
+          }}
+      };
+      logs::log(logs::debug, "[DOCKER] Stable container identity: hostname=wolf-steam mac={}", mac_str);
+    } catch (const std::exception &e) {
+      logs::log(logs::warning,
+                "[DOCKER] Unable to derive stable MAC from app_state_folder '{}': {}; "
+                "hostname still set to wolf-steam",
+                app_state_folder, e.what());
+    }
+    final_json_opts = boost::json::serialize(parsed_json);
+  }
   if (get_vendor(render_node) == NVIDIA && !utils::get_env("NVIDIA_DRIVER_VOLUME_NAME")) {
     logs::log(logs::info, "NVIDIA_DRIVER_VOLUME_NAME not set, assuming nvidia driver toolkit is installed..");
     {
